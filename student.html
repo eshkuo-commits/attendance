@@ -1,0 +1,45 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="referrer" content="no-referrer"><title>簽到 / Attendance</title>
+<style>*{box-sizing:border-box}body{margin:0;background:#edf4f7;color:#173247;font:17px Arial,'Microsoft JhengHei',sans-serif}main{max-width:600px;margin:24px auto;padding:0 16px}.card{background:#fff;border:1px solid #dbe6ec;border-radius:18px;padding:26px;box-shadow:0 8px 30px #1732470a}h1{font-size:25px;line-height:1.5;margin:8px 0 22px}h2{font-size:20px}p{line-height:1.6}small{display:block;color:#647987;font-size:14px;line-height:1.6;margin:5px 0}label{display:block;line-height:1.6;margin-top:18px}input[type=text]{width:100%;padding:15px;font:inherit;border:1px solid #9aadb9;border-radius:10px;margin:10px 0}button{font:inherit;line-height:1.5;border:0;border-radius:10px;padding:14px 18px;cursor:pointer;background:#087e79;color:white;width:100%;margin-top:12px}button:disabled{opacity:.55;cursor:wait}.secondary{background:#edf3f6;color:#24455e}.date{color:#087e79;font-weight:bold}#notice{padding:14px;background:#fff0eb;color:#923a27;border-radius:10px;white-space:pre-line;margin:14px 0;line-height:1.6}#notice[data-error=false]{background:#e3f4ed;color:#146449}canvas{width:100%;height:auto;aspect-ratio:3/1;background:white;border:2px solid #8ba6b4;border-radius:10px;touch-action:none}#consent{width:20px;height:20px;vertical-align:middle}.actions{display:flex;gap:10px}.actions button{flex:1}.success{color:#087e79;text-align:center}button:focus-visible,input:focus-visible{outline:3px solid #1fbaa8;outline-offset:3px}[hidden]{display:none!important}@media(max-width:420px){main{margin:12px auto;padding:0 10px}.card{padding:20px}h1{font-size:22px}}</style></head>
+<body><main><div class="card"><div class="date" id="date">簽到 / Attendance</div><h1 id="topic">讀取課程中…<small>Loading session…</small></h1><div id="notice" role="alert" hidden></div>
+<section id="identity" hidden><form id="identityForm"><label for="identityValue">身分證或完整姓名，擇一即可<small>Enter either your full ID number or full name</small></label><input id="identityValue" type="text" autocomplete="off" maxlength="80" required placeholder="身分證或姓名 / ID or full name"><button id="next" type="submit">下一步：簽名<small style="color:white">Next: sign</small></button></form></section>
+<section id="companyStep" hidden><h2>請選擇所屬公司<small>Select your company</small></h2><div id="companies"></div><button class="secondary" data-back>上一頁重新輸入 / Back</button></section>
+<section id="signature" hidden><h2 id="person"></h2><p>請在框內簽名<small>Sign your full name in the box below</small></p><canvas id="canvas" width="900" height="300" aria-label="手寫簽名區 / Signature pad"></canvas><label><input id="consent" type="checkbox"> 我確認此為本人簽名並參加本次活動。<small>I confirm this is my signature and I attended this session.</small></label><button id="submit">確認送出簽名 / Submit signature</button><div class="actions"><button id="clear" class="secondary">清除重簽 / Clear</button><button class="secondary" data-back>返回 / Back</button></div></section>
+<section id="success" hidden class="success"><h2>簽到完成<small>Attendance recorded</small></h2><p id="savedName"></p><p id="savedTime"></p><button class="secondary" data-back>重新核對簽名 / Sign again</button></section>
+<section id="missing" hidden><p>未在名單內，請聯繫講師。<small>You are not on the list. Please contact the instructor.</small></p><button class="secondary" data-back>上一頁重新輸入 / Back and try again</button></section>
+<button id="reload" class="secondary" hidden>重新載入 / Retry</button></div></main>
+<script>
+'use strict';
+const API='https://script.google.com/macros/s/AKfycbwZCvTbaoHRV2eAIYPzs36x-hjYY6QhhPR0Ml3L_Ev2iLsY5wDLwGoKuElOC8ppStIv6A/exec';
+const $=id=>document.getElementById(id),code=new URLSearchParams(location.search).get('s')||'';
+let token='',personName='',value='',busy=false,pending=null,strokes=[],stroke=null,pointer=null;
+const canvas=$('canvas'),ctx=canvas.getContext('2d');
+function notice(s,error=true){$('notice').textContent=s;$('notice').dataset.error=String(error);$('notice').hidden=!s;}
+function show(step){for(const id of ['identity','companyStep','signature','success','missing'])$(id).hidden=id!==step;notice('');}
+async function rpc(action,payload){
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),45000);
+ try{
+  const response=await fetch(API,{method:'POST',mode:'cors',credentials:'omit',redirect:'follow',cache:'no-store',referrerPolicy:'no-referrer',headers:{'Content-Type':'text/plain;charset=UTF-8'},body:JSON.stringify({action,payload}),signal:controller.signal});
+  if(!response.ok)throw Error('服務暫時無法連線，請重試。 / Service unavailable. Please retry.');
+  let result;try{result=await response.json();}catch(e){throw Error('伺服器回應不正確，請聯繫講師。 / Invalid response. Contact the instructor.');}
+  if(!result.ok)throw Error(result.error||'操作未完成 / Request failed');return result.data;
+ }catch(e){if(e.name==='AbortError'||e instanceof TypeError)throw Error('連線未完成，請檢查網路後再試。 / Connection interrupted. Please retry.');throw e;}finally{clearTimeout(timer);}
+}
+async function run(fn){if(busy)return;busy=true;document.querySelectorAll('button').forEach(b=>b.disabled=true);try{await fn();}catch(e){notice(e.message+'\n請重試或聯繫講師。 / Retry or contact the instructor.');}finally{busy=false;document.querySelectorAll('button').forEach(b=>b.disabled=false);}}
+async function load(){show('');$('reload').hidden=true;if(!/^[a-f0-9]{32}$/.test(code)){$('topic').textContent='簽到連結不完整 / Invalid attendance link';notice('請掃描講師提供的 QR code。 / Scan the QR code provided by your instructor.');return;}
+ try{const d=await rpc('attendanceInfo',{code});$('topic').textContent=d.session.topic;$('date').textContent=d.session.date+'　'+d.session.start+'–'+d.session.end;if(d.canSign)show('identity');else notice(d.availability+'\nPlease contact the instructor.');}
+ catch(e){$('topic').textContent='暫時無法讀取課程 / Unable to load session';notice(e.message);$('reload').hidden=false;}}
+async function verify(company){const r=await rpc('verify',{code,value,company});if(r.needsCompany){show('companyStep');$('companies').replaceChildren();for(const company of r.companies){const b=document.createElement('button');b.textContent=company;b.onclick=()=>run(()=>verify(company));$('companies').append(b);}return;}
+ token=r.token;personName=r.name;$('identityValue').value='';value='';$('person').textContent=r.name+' · '+r.company;clear();show('signature');if(r.signed)notice('你已簽到；再次送出會取代上次簽名。\nAlready signed. Submitting again replaces your previous signature.',false);}
+$('identityForm').onsubmit=e=>{e.preventDefault();value=$('identityValue').value.trim();if(!value)return;run(async()=>{try{await verify();}catch(e){if(e.message.includes('未在名單內'))show('missing');else throw e;}});};
+function clear(){pending=null;ctx.fillStyle='#fff';ctx.fillRect(0,0,900,300);ctx.strokeStyle='#132f45';ctx.lineWidth=4;ctx.lineCap='round';ctx.lineJoin='round';strokes=[];stroke=null;pointer=null;$('consent').checked=false;}
+function point(e){const r=canvas.getBoundingClientRect();return [Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))];}
+canvas.onpointerdown=e=>{if(busy||pointer!==null||pending)return;e.preventDefault();pointer=e.pointerId;canvas.setPointerCapture(pointer);stroke=[point(e)];strokes.push(stroke);};
+canvas.onpointermove=e=>{if(e.pointerId!==pointer||!stroke)return;e.preventDefault();for(const sample of (e.getCoalescedEvents?e.getCoalescedEvents():[e])){const p=point(sample),prev=stroke[stroke.length-1];ctx.beginPath();ctx.moveTo(prev[0]*900,prev[1]*300);ctx.lineTo(p[0]*900,p[1]*300);ctx.stroke();stroke.push(p);}};
+function end(e){if(e.pointerId===pointer){pointer=null;stroke=null;}}canvas.onpointerup=end;canvas.onpointercancel=end;canvas.onlostpointercapture=end;
+$('clear').onclick=()=>{clear();notice('');};
+$('submit').onclick=()=>run(async()=>{if(!$('consent').checked)throw Error('請勾選本人簽名確認 / Please confirm your signature');if(strokes.reduce((n,s)=>n+s.length,0)<12)throw Error('請完整手寫姓名 / Please sign your full name');
+ // Keep the same payload and request ID on uncertain network retries.
+ if(!pending)pending={token,requestId:crypto.randomUUID(),png:canvas.toDataURL('image/png'),strokes:JSON.parse(JSON.stringify(strokes)),consent:true};
+ const r=await rpc('sign',pending);if(!r.signed)throw Error('簽名尚未確認儲存 / Signature not confirmed');pending=null;token='';show('success');$('savedName').textContent=personName;$('savedTime').textContent=new Date(r.signedAt).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'})+' (UTC+8)';});
+document.querySelectorAll('[data-back]').forEach(b=>b.onclick=()=>{token='';value='';clear();$('identityValue').value='';run(load);});$('reload').onclick=()=>run(load);run(load);
+</script></body></html>
